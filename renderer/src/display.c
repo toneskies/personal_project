@@ -64,7 +64,7 @@ void doInput(void) {
     }
 }
 
-void prepareScene(void) { cube = load_generated_cube(100, 100, 100); }
+void prepareScene(void) {}
 
 void update(void) {}
 
