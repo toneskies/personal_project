@@ -2,10 +2,11 @@
 #include <stdlib.h>
 
 #include "display.h"
+#include "light.h"
 #include "mesh.h"
+#include "stb_ds.h"
 
-#define SCREEN_WIDTH 1280
-#define SCREEN_HEIGHT 720
+Mesh mesh = {0};
 
 int main(int argc, char *argv[]) {
 
@@ -13,7 +14,9 @@ int main(int argc, char *argv[]) {
 
     initSDL();
 
-    setup();
+    setup(&mesh);
+
+    init_light((vec3_t){0, 0, 1});
 
     atexit(cleanup);
 
@@ -21,9 +24,11 @@ int main(int argc, char *argv[]) {
 
         // Loop
         doInput();
-        update();
-        render();
+        update(&mesh);
+        render(&mesh);
     }
+
+    free_mesh(&mesh);
 
     return 0;
 }

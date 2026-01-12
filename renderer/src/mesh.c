@@ -1,34 +1,68 @@
 #include "mesh.h"
 #include "display.h"
+#include "stb_ds.h"
 #include "triangle.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-vec3_t mesh_vertices[N_MESH_NODES] = {
-    {.x = -1, .y = -1, .z = -1}, // 1
-    {.x = -1, .y = 1, .z = -1},  // 2
-    {.x = 1, .y = 1, .z = -1},   // 3
-    {.x = 1, .y = -1, .z = -1},  // 4
-    {.x = 1, .y = 1, .z = 1},    // 5
-    {.x = 1, .y = -1, .z = 1},   // 6
-    {.x = -1, .y = 1, .z = 1},   // 7
-    {.x = -1, .y = -1, .z = 1}   // 8
-};
+Mesh load_mesh(char *filename) {
+    Mesh mesh = {0};
+    mesh.vertices = NULL; // Important: Initialize stb_ds arrays to NULL
+    mesh.faces = NULL;
+    mesh.rotation = (vec3_t){0, 0, 0};
+    mesh.scale = (vec3_t){1, 1, 1};
+    mesh.translation = (vec3_t){0, 0, 0};
 
-face_t mesh_faces[N_MESH_FACES] = {
-    // front
-    {.a = 1, .b = 2, .c = 3},
-    {.a = 1, .b = 3, .c = 4},
-    // right
-    {.a = 4, .b = 3, .c = 5},
-    {.a = 4, .b = 5, .c = 6},
-    // back
-    {.a = 6, .b = 5, .c = 7},
-    {.a = 6, .b = 7, .c = 8},
-    // left
-    {.a = 8, .b = 7, .c = 2},
-    {.a = 8, .b = 2, .c = 1},
-    // top
-    {.a = 2, .b = 7, .c = 5},
-    {.a = 2, .b = 5, .c = 3},
-    // bottom
-    {.a = 6, .b = 8, .c = 1},
-    {.a = 6, .b = 1, .c = 4}};
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        printf("Error: Could not open file %s\n", filename);
+        return mesh;
+    }
+
+    char line[1024];
+    while (fgets(line, 1024, file)) {
+        // 1. Vertex Information (v x y z)
+        if (strncmp(line, "v ", 2) == 0) {
+            vec3_t v;
+            sscanf(line, "v %f %f %f", &v.x, &v.y, &v.z);
+            arrput(mesh.vertices, v);
+        }
+        // 2. Face Information (f v1/vt/vn v2/vt/vn v3/vt/vn)
+        else if (strncmp(line, "f ", 2) == 0) {
+            int vertex_indices[3];
+            int texture_indices[3];
+            int normal_indices[3];
+
+            // Try reading: f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3
+            int matches = sscanf(
+                line, "f %d/%d/%d %d/%d/%d %d/%d/%d", &vertex_indices[0],
+                &texture_indices[0], &normal_indices[0], &vertex_indices[1],
+                &texture_indices[1], &normal_indices[1], &vertex_indices[2],
+                &texture_indices[2], &normal_indices[2]);
+
+            // If that fails, try reading: f v1 v2 v3 (Raw geometry)
+            if (matches != 9) {
+                sscanf(line, "f %d %d %d", &vertex_indices[0],
+                       &vertex_indices[1], &vertex_indices[2]);
+            }
+
+            // Create the face
+            // OBJ indices are 1-based, so we subtract 1 for C arrays
+            face_t face = {.a = vertex_indices[0] - 1,
+                           .b = vertex_indices[1] - 1,
+                           .c = vertex_indices[2] - 1,
+                           .color = 0xFFFFFFFF};
+
+            arrput(mesh.faces, face);
+        }
+    }
+
+    fclose(file);
+    return mesh;
+}
+
+void free_mesh(Mesh *mesh) {
+    arrfree(mesh->vertices);
+    arrfree(mesh->faces);
+}

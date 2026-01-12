@@ -4,20 +4,20 @@
 #include "triangle.h"
 #include "vector.h"
 
-#define N_MESH_NODES 8
-#define N_MESH_FACES (6 * 2)
-
-extern vec3_t mesh_vertices[N_MESH_NODES];
-extern face_t mesh_faces[N_MESH_FACES];
-
 typedef struct {
     vec3_t position;
 } Node;
 
 typedef struct {
-    Node *nodes;
-    face_t *faces;
-    int num_nodes;
+    vec3_t *vertices;   // Dynamic array (stb_ds)
+    face_t *faces;      // Dynamic array (stb_ds)
+    vec3_t rotation;    // Per-mesh rotation
+    vec3_t scale;       // Per-mesh scale
+    vec3_t translation; // Per-mesh position
 } Mesh;
+
+Mesh load_mesh(char *filename);
+
+void free_mesh(Mesh *mesh);
 
 #endif

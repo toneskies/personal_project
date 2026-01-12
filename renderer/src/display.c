@@ -1,7 +1,13 @@
 #include "display.h"
+#include "light.h"
+#include "matrix.h"
 #include "mesh.h"
 #include "triangle.h"
 #include "vector.h"
+#include <stdlib.h>
+
+#define STB_DS_IMPLEMENTATION
+#include "stb_ds.h"
 
 App app;
 uint32_t *color_buffer = NULL;
@@ -10,13 +16,33 @@ float fov = 640;
 float delta_time = 0;
 uint32_t previous_frame_time = 0;
 
-Mesh *fea_mesh = NULL;
 vec3_t camera_position = {.x = 0, .y = 0, .z = -5};
-float rotation = 0.0;
-
 vec3_t cube_rotation = {0, 0, 0};
 
-triangle_t triangles_to_render[N_MESH_FACES];
+triangle_t *triangles_to_render = NULL;
+
+mat4_t projection_matrix;
+
+/* -------------------------------------------------------------------------- */
+/*                                   HELPERS                                  */
+/* -------------------------------------------------------------------------- */
+void int_swap(int *a, int *b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+int compare_triangle_depth(const void *a, const void *b) {
+    triangle_t *t1 = (triangle_t *)a;
+    triangle_t *t2 = (triangle_t *)b;
+
+    if (t1->avg_depth < t2->avg_depth)
+        return 1; // t1 is closer, so it goes later (painted last)
+    else if (t1->avg_depth > t2->avg_depth)
+        return -1; // t1 is farther, so it goes first (painted first)
+
+    return 0;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                                SDL FUNCTIONS                               */
@@ -74,7 +100,7 @@ void doInput(void) {
     }
 }
 
-void setup(void) {
+void setup(Mesh *mesh) {
     color_buffer =
         (uint32_t *)malloc(sizeof(uint32_t) * SCREEN_HEIGHT * SCREEN_WIDTH);
 
@@ -83,9 +109,18 @@ void setup(void) {
         SCREEN_WIDTH, SCREEN_HEIGHT
 
     );
+
+    float fov = 3.141592 / 3.0; // 60 degrees in radians
+    float aspect = (float)SCREEN_HEIGHT / (float)SCREEN_WIDTH;
+    float znear = 0.1;
+    float zfar = 100.0;
+
+    projection_matrix = mat4_make_perspective(fov, aspect, znear, zfar);
+
+    *mesh = load_mesh("./assets/f22.obj");
 }
 
-void update(void) {
+void update(Mesh *mesh) {
     // frame timer
     int frame_start = SDL_GetTicks();
 
@@ -97,66 +132,128 @@ void update(void) {
     if (time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME)
         SDL_Delay(time_to_wait);
 
+    previous_frame_time = SDL_GetTicks();
+
     // Physics
-    cube_rotation.x += 0.01;
-    cube_rotation.y += 0.01;
-    cube_rotation.z += 0.01;
+    mesh->rotation.x += 0.01;
+    mesh->rotation.y += 0.01;
+    mesh->rotation.z += 0.01;
+
+    arrfree(triangles_to_render);
+    triangles_to_render = NULL;
+
+    int num_faces = arrlen(mesh->faces);
 
     // Loop all triangle faces of our mesh
-    for (int i = 0; i < N_MESH_FACES; i++) {
-        face_t mesh_face = mesh_faces[i];
+    for (int i = 0; i < num_faces; i++) {
+        face_t mesh_face = mesh->faces[i];
 
         vec3_t face_vertices[3];
-        face_vertices[0] = mesh_vertices[mesh_face.a - 1];
-        face_vertices[1] = mesh_vertices[mesh_face.b - 1];
-        face_vertices[2] = mesh_vertices[mesh_face.c - 1];
+        face_vertices[0] = mesh->vertices[mesh_face.a];
+        face_vertices[1] = mesh->vertices[mesh_face.b];
+        face_vertices[2] = mesh->vertices[mesh_face.c];
 
+        vec3_t transformed_vertices[3];
         triangle_t projected_triangle;
 
-        // Loop all three vertices of this current face and apply
-        // transformations
         for (int j = 0; j < 3; j++) {
             vec3_t transformed_vertex = face_vertices[j];
 
+            // 1. Model Transform (Rotate/Translate)
             transformed_vertex =
-                vec3_rotate_x(transformed_vertex, cube_rotation.x);
+                vec3_rotate_x(transformed_vertex, mesh->rotation.x);
             transformed_vertex =
-                vec3_rotate_y(transformed_vertex, cube_rotation.y);
+                vec3_rotate_y(transformed_vertex, mesh->rotation.y);
             transformed_vertex =
-                vec3_rotate_z(transformed_vertex, cube_rotation.z);
+                vec3_rotate_z(transformed_vertex, mesh->rotation.z);
 
-            // Translate the vertex away from the camera
-            transformed_vertex.z -= camera_position.z;
+            transformed_vertex.z -= 5.0; // Move away from camera
 
-            // Project the current vertex
-            vec2_t projected_point = project(transformed_vertex);
+            // 2. PROJECTION MATRIX (View Space -> Clip Space)
+            vec4_t projected_point = mat4_mul_vec4(
+                projection_matrix, vec4_from_vec3(transformed_vertex));
 
-            // Scale and translate the projected points to the middle of the
-            // screen
+            // 3. PERSPECTIVE DIVIDE (Clip Space -> NDC)
+            if (projected_point.w != 0) {
+                projected_point.x /= projected_point.w;
+                projected_point.y /= projected_point.w;
+                projected_point.z /= projected_point.w;
+            }
+
+            // 4. VIEWPORT TRANSFORM (NDC -> Screen Space)
+            // NDC is [-1, 1], we map to [0, Width]
+            projected_point.x = (projected_point.x + 1.0) * 0.5 * SCREEN_WIDTH;
+            projected_point.y = (projected_point.y + 1.0) * 0.5 * SCREEN_HEIGHT;
+
+            projected_triangle.points[j].x = projected_point.x;
+            projected_triangle.points[j].y = projected_point.y;
+        }
+        // Backface Culling
+        vec3_t vector_ab =
+            vec3_sub(transformed_vertices[1], transformed_vertices[0]);
+        vec3_t vector_ac =
+            vec3_sub(transformed_vertices[2], transformed_vertices[0]);
+
+        // Compute Normal (perpendicular to the face)
+        vec3_t normal = vec3_cross(vector_ab, vector_ac);
+        vec3_normalize(&normal);
+
+        vec3_t camera_ray = vec3_sub(camera_position, transformed_vertices[0]);
+
+        // Calculate alignment
+        float dot_normal_camera = vec3_dot(normal, camera_ray);
+
+        if (dot_normal_camera < 0) {
+            continue;
+        }
+
+        // LIGHTING
+        vec3_t light_direction = get_light_direction();
+        float alignment = -vec3_dot(normal, light_direction);
+        uint32_t base_color = mesh_face.color;
+
+        float avg_depth =
+            (transformed_vertices[0].z + transformed_vertices[1].z +
+             transformed_vertices[2].z) /
+            3.0;
+        for (int j = 0; j < 3; j++) {
+
+            vec2_t projected_point = project(transformed_vertices[j]);
+
             projected_point.x += (SCREEN_WIDTH / 2);
             projected_point.y += (SCREEN_HEIGHT / 2);
 
             projected_triangle.points[j] = projected_point;
+            projected_triangle.color =
+                light_apply_intensity(base_color, alignment);
+            projected_triangle.avg_depth = avg_depth;
         }
 
-        // Save the projected triangle in the array of triangles to render
-        triangles_to_render[i] = projected_triangle;
+        int num_triangles = arrlen(triangles_to_render);
+        qsort(triangles_to_render, num_triangles, sizeof(triangle_t),
+              compare_triangle_depth);
+        arrput(triangles_to_render, projected_triangle);
     }
 }
 
-void render(void) {
+void render(Mesh *mesh) {
     SDL_SetRenderDrawColor(app.renderer, 96, 128, 255, 255);
     SDL_RenderClear(app.renderer);
 
     clear_color_buffer(0xFF1E1E1E);
     draw_grid();
 
+    int num_triangles = arrlen(triangles_to_render);
+
     // Loop all projected triangles and render them
-    for (int i = 0; i < N_MESH_FACES; i++) {
+    for (int i = 0; i < num_triangles; i++) {
         triangle_t triangle = triangles_to_render[i];
-        draw_rect(triangle.points[0].x, triangle.points[0].y, 3, 3, 0xFFFFFF00);
-        draw_rect(triangle.points[1].x, triangle.points[1].y, 3, 3, 0xFFFFFF00);
-        draw_rect(triangle.points[2].x, triangle.points[2].y, 3, 3, 0xFFFFFF00);
+
+        // Use your new draw_triangle function
+        draw_filled_triangle(triangle.points[0].x, triangle.points[0].y,
+                             triangle.points[1].x, triangle.points[1].y,
+                             triangle.points[2].x, triangle.points[2].y,
+                             triangle.color);
     }
 
     render_color_buffer();
@@ -213,22 +310,114 @@ void draw_pixel(int x, int y, uint32_t color) {
         color_buffer[(SCREEN_WIDTH * y) + x] = color;
 }
 
-Mesh *load_preset_cube_mesh() {
-    Mesh *cube_mesh;
-    for (int i = 0; i < N_MESH_FACES; i++) {
-        cube_mesh->faces[i] = mesh_faces[i];
+void draw_line(int x0, int y0, int x1, int y1, uint32_t color) {
+    int dx = abs(x1 - x0);
+    int dy = abs(y1 - y0);
 
-        face_t mesh_face = mesh_faces[i];
-        vec3_t face_vertices[3];
-        face_vertices[0] = mesh_vertices[mesh_face.a - 1];
-        face_vertices[1] = mesh_vertices[mesh_face.b - 1];
-        face_vertices[2] = mesh_vertices[mesh_face.c - 1];
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
 
-        for (int j = 0; j < 3; j++) {
-            cube_mesh->nodes[i].position = face_vertices[j];
+    int err = dx - dy;
+
+    while (1) {
+        draw_pixel(x0, y0, color);
+
+        if (x0 == x1 && y0 == y1)
+            break;
+
+        int e2 = 2 * err;
+
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
         }
     }
-    return cube_mesh;
+}
+void draw_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
+                   uint32_t color) {
+    draw_line(x0, y0, x1, y1, color);
+    draw_line(x1, y1, x2, y2, color);
+    draw_line(x2, y2, x0, y0, color);
+}
+
+// Draw a filled triangle with a flat bottom
+// (Top vertex is (x0,y0), bottom base is (x1,y1)-(x2,y2))
+void fill_flat_bottom_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
+                               uint32_t color) {
+    // Find the two slopes (inverse slope: run/rise)
+    float inv_slope1 = (float)(x1 - x0) / (y1 - y0);
+    float inv_slope2 = (float)(x2 - x0) / (y2 - y0);
+
+    // Start x_start and x_end from the top vertex
+    float x_start = x0;
+    float x_end = x0;
+
+    // Loop all the scanlines from top to bottom
+    for (int y = y0; y <= y1; y++) {
+        draw_line((int)x_start, y, (int)x_end, y, color);
+        x_start += inv_slope1;
+        x_end += inv_slope2;
+    }
+}
+
+// Draw a filled triangle with a flat top
+// (Top base is (x0,y0)-(x1,y1), bottom vertex is (x2,y2))
+void fill_flat_top_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
+                            uint32_t color) {
+    // Find the two slopes (inverse slope: run/rise)
+    float inv_slope1 = (float)(x2 - x0) / (y2 - y0);
+    float inv_slope2 = (float)(x2 - x1) / (y2 - y1);
+
+    // Start x_start and x_end from the bottom vertex
+    float x_start = x2;
+    float x_end = x2;
+
+    // Loop all the scanlines from bottom to top
+    for (int y = y2; y >= y0; y--) {
+        draw_line((int)x_start, y, (int)x_end, y, color);
+        x_start -= inv_slope1;
+        x_end -= inv_slope2;
+    }
+}
+
+void draw_filled_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
+                          uint32_t color) {
+    // We need to sort the vertices by y-coordinate ascending (y0 < y1 < y2)
+    if (y0 > y1) {
+        int_swap(&y0, &y1);
+        int_swap(&x0, &x1);
+    }
+    if (y1 > y2) {
+        int_swap(&y1, &y2);
+        int_swap(&x1, &x2);
+    }
+    if (y0 > y1) {
+        int_swap(&y0, &y1);
+        int_swap(&x0, &x1);
+    }
+
+    if (y1 == y2) {
+        // Triangle is already a flat-bottom triangle
+        fill_flat_bottom_triangle(x0, y0, x1, y1, x2, y2, color);
+    } else if (y0 == y1) {
+        // Triangle is already a flat-top triangle
+        fill_flat_top_triangle(x0, y0, x1, y1, x2, y2, color);
+    } else {
+        // Calculate the midpoint (Mx, My) to split the triangle into two parts
+        int My = y1;
+        int Mx = ((float)((x2 - x0) * (y1 - y0)) / (float)(y2 - y0)) + x0;
+
+        // Draw the flat-bottom part
+        fill_flat_bottom_triangle(x0, y0, x1, y1, Mx, My, color);
+
+        // Draw the flat-top part
+        fill_flat_top_triangle(x1, y1, Mx, My, x2, y2, color);
+    }
 }
 
 /* -------------------------------------------------------------------------- */
