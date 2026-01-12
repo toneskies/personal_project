@@ -1,12 +1,17 @@
 #include "display.h"
 #include "mesh.h"
+#include "vector.h"
 
 App app;
 uint32_t *color_buffer = NULL;
 SDL_Texture *color_buffer_texture = NULL;
 float fov = 640;
-vec3_t *cube = NULL;
+
+Mesh *fea_mesh = NULL;
 vec3_t camera_position = {.x = 0, .y = 0, .z = -5};
+float rotation = 0.0;
+
+float previous_frame_time;
 
 /* -------------------------------------------------------------------------- */
 /*                                SDL FUNCTIONS                               */
@@ -42,6 +47,15 @@ void initSDL(void) {
         printf("Failed to create renderer: %s\n", SDL_GetError());
         exit(1);
     }
+
+    color_buffer =
+        (uint32_t *)malloc(sizeof(uint32_t) * SCREEN_HEIGHT * SCREEN_WIDTH);
+
+    color_buffer_texture = SDL_CreateTexture(
+        app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+        SCREEN_WIDTH, SCREEN_HEIGHT
+
+    );
 }
 
 void doInput(void) {
@@ -64,25 +78,28 @@ void doInput(void) {
     }
 }
 
-void prepareScene(void) {}
+void setup(void) { fea_mesh = load_generated_mesh(); }
 
-void update(void) {}
+void update(void) {
+    int time_to_wait =
+        FRAME_TARGET_TIME - (SDL_GetTicks() - previous_frame_time);
+
+    if (time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME)
+        SDL_Delay(time_to_wait);
+
+    previous_frame_time = SDL_GetTicks();
+}
 
 void render(void) {
     SDL_SetRenderDrawColor(app.renderer, 96, 128, 255, 255);
     SDL_RenderClear(app.renderer);
-    color_buffer =
-        (uint32_t *)malloc(sizeof(uint32_t) * SCREEN_HEIGHT * SCREEN_WIDTH);
 
-    color_buffer_texture = SDL_CreateTexture(
-        app.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-        SCREEN_WIDTH, SCREEN_HEIGHT
-
-    );
-
-    clear_color_buffer(0xFF000000);
+    clear_color_buffer(0xFF1E1E1E);
     draw_grid();
-    draw_generated_cube(cube);
+
+    if (fea_mesh) {
+        draw_mesh_nodes(fea_mesh);
+    }
 
     render_color_buffer();
 
@@ -106,7 +123,7 @@ void render_color_buffer(void) {
 void draw_grid(void) {
     for (int y = 0; y < SCREEN_HEIGHT; y++)
         for (int x = 0; x < SCREEN_WIDTH; x++)
-            if (x % 10 == 0 || y % 10 == 0)
+            if (x % 25 == 0 || y % 25 == 0)
                 color_buffer[(SCREEN_WIDTH * y) + x] = 0xFF111111;
 }
 
@@ -125,9 +142,17 @@ void draw_pixel(int x, int y, uint32_t color) {
         color_buffer[(SCREEN_WIDTH * y) + x] = color;
 }
 
-void draw_generated_cube(vec3_t *cube) {
-    for (int pt = 0; pt < (9 * 9 * 9); pt++) {
-        vec2_t projected_point = project(cube[pt]);
+void draw_mesh_nodes(Mesh *mesh) {
+    rotation += 0.001;
+    for (int i = 0; i < mesh->num_nodes; i++) {
+        vec3_t point = mesh->nodes[i].position;
+
+        vec3_t transformed_point = vec3_rotate_x(point, rotation);
+        transformed_point = vec3_rotate_y(transformed_point, rotation);
+        transformed_point = vec3_rotate_z(transformed_point, rotation);
+
+        vec2_t projected_point = project(transformed_point);
+
         draw_rect(projected_point.x, projected_point.y, 4, 4, 0xFFFFFF00);
     }
 }
@@ -136,9 +161,11 @@ void draw_generated_cube(vec3_t *cube) {
 /*                                 PROJECTION                                 */
 /* -------------------------------------------------------------------------- */
 vec2_t project(vec3_t point) {
+    float perspective_factor = fov / (point.z - camera_position.z);
     vec2_t projected_point = {
-        .x = (fov * (point.x / (point.z)) + (SCREEN_WIDTH / 2)),
-        .y = (fov * (point.y / (point.z)) + (SCREEN_HEIGHT / 2))};
+        .x = (point.x * perspective_factor) + (SCREEN_WIDTH / 2),
+        .y = (point.y * perspective_factor) + (SCREEN_HEIGHT / 2),
+    };
     return projected_point;
 }
 

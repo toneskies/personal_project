@@ -3,6 +3,15 @@
 
 #include "vector.h"
 
-vec3_t *load_generated_cube(int length, int width, int height);
+typedef struct {
+    vec3_t position;
+} Node;
+
+typedef struct {
+    Node *nodes;
+    int num_nodes;
+} Mesh;
+
+Mesh *load_generated_mesh(void);
 
 #endif

@@ -13,6 +13,8 @@ int main(int argc, char *argv[]) {
 
     initSDL();
 
+    setup();
+
     atexit(cleanup);
 
     while (1) {
