@@ -23,7 +23,7 @@ extern SDL_Texture *color_buffer_texture;
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
 
-#define FPS 30
+#define FPS 60
 #define FRAME_TARGET_TIME (1000 / FPS)
 
 /* -------------------------------------------------------------------------- */
@@ -43,13 +43,12 @@ void render_color_buffer(void);
 void draw_grid(void);
 void draw_rect(int x, int y, int width, int height, uint32_t color);
 void draw_pixel(int x, int y, uint32_t color);
-void draw_mesh_nodes(Mesh *mesh);
+Mesh *load_preset_cube_mesh();
 
-/* --------------------------------------------------------------------------
- */
-/*                                 PROJECTION */
-/* --------------------------------------------------------------------------
- */
+/* --------------------------------------------------------------------------*/
+/*                                                                           */
+/*                                 PROJECTION                                */
+/* --------------------------------------------------------------------------*/
 vec2_t project(vec3_t point);
 
 // CLEAN UP for the renderer on exit
