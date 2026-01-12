@@ -1,0 +1,13 @@
+# Object files
+*.o
+*.obj
+
+# Executables
+*.exe
+*.out
+a.out # Common default executable name on Linux/macOS
+bin/  # Ignore an entire 'bin' directory if you use one for build outputs
+
+# Debug information (optional, but often ignored)
+*.dSYM/
+*.pdb
